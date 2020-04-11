@@ -62,6 +62,20 @@ static const uint8_t dupa[46] =
 		'-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-',
 		'\r', '\n' };
 
+
+static const char main_error_strings[17][17] = {"I2C_PRESSURE_ERR", "I2C_RTC_ERR",
+		"POWER_LED_FLAG", "I2C_MAX30205_ERR","I2C_HDC1080_ERR","I2C_INA3221_ERR",
+		"I2C_GYRO_ERR", "I2C_ACC_ERR","I2C_BARO_ERR","DS18_ERR","SD_ERR",
+		"GPS_ERR","WIFI_ERR","LORA_ERR", "ODCINACZ_FLAG", "RUNNING_FLAG"
+};
+
+
+static const char exp_error_strings[17][17] = {"TEMP1_DN_OK", "TEMP2_DN_OK","TEMP3_DN_OK",
+		"TEMP4_DN_OK","TEMP5_DN_OK","TEMP6_DN_OK","TEMP1_UP_OK",
+		"TEMP2_UP_OK","TEMP3_UP_OK","TEMP4_UP_OK","TEMP5_UP_OK",
+		"TEMP6_UP_OK","RTC_ERR","LTC_ERR","SD_ERR",
+		"RUNNING",
+};
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -75,8 +89,9 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-uint8_t receivedUART;
-volatile uint8_t requestedState = '0';
+uint8_t requestedStateCommand[5];
+uint8_t requestedState = 0;
+volatile uint8_t UART_Received_Flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -101,9 +116,9 @@ void LoraTransmitByte(uint8_t *data, uint8_t size);
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+	UART_Received_Flag = 1;
 	HAL_GPIO_WritePin(LED4_GPIO_Port, LED4_Pin, GPIO_PIN_SET);
-	requestedState = (uint8_t) receivedUART;
-	HAL_UART_Receive_IT(&huart2, &receivedUART, 1); // Ponowne w��czenie nas�uchiwania
+	HAL_UART_Receive_IT(&huart2, &requestedStateCommand, 5); // Ponowne w��czenie nas�uchiwania
 }
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim);
 /* USER CODE END PFP */
@@ -149,9 +164,20 @@ int main(void)
 	uint8_t UARTBufLen = 0;
 	uint8_t ReceivedData[64];
 	uint8_t ReceivedPayload[64];
+
+	uint16_t statusMain = 0;
+	uint16_t statusKom = 0;
+	int32_t alt = 0;
+	uint32_t lat = 0;
+	uint32_t lon = 0;
+	uint32_t tempInfo = 0;
+	uint16_t lastUplink = 0;
+	int16_t meanTemp = 0;
+
 	char UARTBuf[512];
 	uint8_t DNframe[2] = {0x00, 0x01};
-	HAL_UART_Receive_IT(&huart2, &receivedUART, 1);
+	strcpy(&requestedStateCommand, "NICOO");
+	HAL_UART_Receive_IT(&huart2, &requestedStateCommand, 5);
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -202,15 +228,38 @@ int main(void)
 				UARTBufLen += sprintf(&UARTBuf[UARTBufLen], "\r\n");
 				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
 
-
+				if (UART_Received_Flag)
+				{
+					UART_Received_Flag = 0;
+					if (!strncmp((char*)&requestedStateCommand, "ODCIN", 5))
+					{
+						requestedState = 1;
+					}
+					else if ((char*)!strncmp(&requestedStateCommand, "POWON", 5))
+					{
+						requestedState = 2;
+					}
+					else if ((char*)!strncmp(&requestedStateCommand, "POWOF", 5))
+					{
+						requestedState = 3;
+					}
+					else
+					{
+						requestedState = 0;
+					}
+				}
 
 				switch (requestedState)
 				{
-				case '1':
+				case 3:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x03;
+					break;
+				case 2:
 					DNframe[0] = 0x00;
 					DNframe[1] = 0x02;
 					break;
-				case '2':
+				case 1:
 					DNframe[0] = 0x55;
 					DNframe[1] = 0x55;
 					break;
@@ -220,6 +269,54 @@ int main(void)
 					break;
 				}
 				LoraWANTransmitByte(DNframe, 2);
+
+			    alt = (int32_t)((uint32_t)ReceivedPayload[0] << 24) + ((uint32_t)ReceivedPayload[1] << 16) + ((uint32_t)ReceivedPayload[2] << 8) + ((uint32_t)ReceivedPayload[3]);
+			    lat = (uint32_t)(((uint32_t)ReceivedPayload[4] << 24) + ((uint32_t)ReceivedPayload[5] << 24) + ((uint32_t)ReceivedPayload[6] << 8) + ((uint32_t)ReceivedPayload[7]));
+			    lon = (uint32_t)(((uint32_t)ReceivedPayload[8] << 24) + ((uint32_t)ReceivedPayload[9] << 16) + ((uint32_t)ReceivedPayload[10] << 8) + ((uint32_t)ReceivedPayload[11]));
+			    meanTemp = (int16_t)((uint16_t)ReceivedPayload[12] << 8) + ((uint16_t)ReceivedPayload[13]);
+			    tempInfo = (uint32_t)((uint32_t)ReceivedPayload[14] << 16) + ((uint32_t)ReceivedPayload[15] << 8) + ((uint32_t)ReceivedPayload[16]);
+			    lastUplink =  ((uint16_t)ReceivedPayload[17] << 8) + ((uint16_t)ReceivedPayload[18]);
+			    statusMain = ((uint16_t)ReceivedPayload[19] << 8) + ((uint16_t)ReceivedPayload[20]);
+			    statusKom = ((uint16_t)ReceivedPayload[21] << 8) + ((uint16_t)ReceivedPayload[22]);
+
+
+				UARTBufLen = sprintf(UARTBuf, "Altitude = %ld\r\n", alt);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+				UARTBufLen = sprintf(UARTBuf, "Lattitude = %lu\r\n", lat);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+				UARTBufLen = sprintf(UARTBuf, "Longitutde = %lu\r\n", lon);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+				UARTBufLen = sprintf(UARTBuf, "Mean Temp = %d\r\n", meanTemp);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+				UARTBufLen = sprintf(UARTBuf, "Temp Info = %08lx\r\n", tempInfo);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+				UARTBufLen = sprintf(UARTBuf, "Last Uplink = %04x\r\n", lastUplink);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+				UARTBufLen = sprintf(UARTBuf, "Status Main = %04x (", statusMain);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+
+				for (int i = 0; i < 15; i++)
+				{
+					if ((statusMain & (1 << i)) != 0)
+					{
+						UARTBufLen = sprintf((char*) UARTBuf, "%s,", main_error_strings[i]);
+						HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+					}
+				}
+
+				UARTBufLen = sprintf(UARTBuf, ")\r\nStatus Exp = %04x (", statusKom);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+
+				for (int i = 0; i < 15; i++)
+				{
+					if ((statusKom & (1 << i)) != 0)
+					{
+						UARTBufLen = sprintf((char*) UARTBuf, "%s,", exp_error_strings[i]);
+						HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+					}
+				}
+				UARTBufLen = sprintf(UARTBuf, ")\r\n");
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
 
 			}
 
