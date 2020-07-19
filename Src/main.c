@@ -118,7 +118,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	UART_Received_Flag = 1;
 	HAL_GPIO_WritePin(LED4_GPIO_Port, LED4_Pin, GPIO_PIN_SET);
-	HAL_UART_Receive_IT(&huart2, &requestedStateCommand, 5); // Ponowne w��czenie nas�uchiwania
+	HAL_UART_Receive_IT(&huart2, requestedStateCommand, 5); // Ponowne w��czenie nas�uchiwania
 }
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim);
 /* USER CODE END PFP */
@@ -173,11 +173,13 @@ int main(void)
 	uint32_t tempInfo = 0;
 	uint16_t lastUplink = 0;
 	int16_t meanTemp = 0;
+	uint32_t sec = 0;
+	uint32_t tx_sec = 0;
 
 	char UARTBuf[512];
 	uint8_t DNframe[2] = {0x00, 0x01};
-	strcpy(&requestedStateCommand, "NICOO");
-	HAL_UART_Receive_IT(&huart2, &requestedStateCommand, 5);
+	strcpy((char*)requestedStateCommand, "NICOO");
+	HAL_UART_Receive_IT(&huart2, requestedStateCommand, 5);
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -189,6 +191,7 @@ int main(void)
 		UARTBufLen = 0;
 
 		ReceivedNbOfBytes = LoraReceive();
+		sec++;
 		if (ReceivedNbOfBytes)
 		{
 			FifoCurrRxAddr = readLoraRegister(0x10);
@@ -210,9 +213,6 @@ int main(void)
 			UARTBufLen += sprintf(&UARTBuf[UARTBufLen], "\r\n");
 			HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
 
-
-
-
 			if (LoraWANParseDN(ReceivedData, ReceivedNbOfBytes) == 0x01)
 			{
 				// packet verified and ok
@@ -228,50 +228,8 @@ int main(void)
 				UARTBufLen += sprintf(&UARTBuf[UARTBufLen], "\r\n");
 				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
 
-				if (UART_Received_Flag)
-				{
-					UART_Received_Flag = 0;
-					if (!strncmp((char*)&requestedStateCommand, "ODCIN", 5))
-					{
-						requestedState = 1;
-					}
-					else if ((char*)!strncmp(&requestedStateCommand, "POWON", 5))
-					{
-						requestedState = 2;
-					}
-					else if ((char*)!strncmp(&requestedStateCommand, "POWOF", 5))
-					{
-						requestedState = 3;
-					}
-					else
-					{
-						requestedState = 0;
-					}
-				}
-
-				switch (requestedState)
-				{
-				case 3:
-					DNframe[0] = 0x00;
-					DNframe[1] = 0x03;
-					break;
-				case 2:
-					DNframe[0] = 0x00;
-					DNframe[1] = 0x02;
-					break;
-				case 1:
-					DNframe[0] = 0x55;
-					DNframe[1] = 0x55;
-					break;
-				default:
-					DNframe[0] = 0x00;
-					DNframe[1] = 0x01;
-					break;
-				}
-				LoraWANTransmitByte(DNframe, 2);
-
 			    alt = (int32_t)((uint32_t)ReceivedPayload[0] << 24) + ((uint32_t)ReceivedPayload[1] << 16) + ((uint32_t)ReceivedPayload[2] << 8) + ((uint32_t)ReceivedPayload[3]);
-			    lat = (uint32_t)(((uint32_t)ReceivedPayload[4] << 24) + ((uint32_t)ReceivedPayload[5] << 24) + ((uint32_t)ReceivedPayload[6] << 8) + ((uint32_t)ReceivedPayload[7]));
+			    lat = (uint32_t)(((uint32_t)ReceivedPayload[4] << 24) + ((uint32_t)ReceivedPayload[5] << 16) + ((uint32_t)ReceivedPayload[6] << 8) + ((uint32_t)ReceivedPayload[7]));
 			    lon = (uint32_t)(((uint32_t)ReceivedPayload[8] << 24) + ((uint32_t)ReceivedPayload[9] << 16) + ((uint32_t)ReceivedPayload[10] << 8) + ((uint32_t)ReceivedPayload[11]));
 			    meanTemp = (int16_t)((uint16_t)ReceivedPayload[12] << 8) + ((uint16_t)ReceivedPayload[13]);
 			    tempInfo = (uint32_t)((uint32_t)ReceivedPayload[14] << 16) + ((uint32_t)ReceivedPayload[15] << 8) + ((uint32_t)ReceivedPayload[16]);
@@ -319,8 +277,11 @@ int main(void)
 				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
 
 			}
+			else
+			{
 
-			HAL_Delay(1);
+			}
+			HAL_Delay(5);
 
 			/*
 			 PktSnr = readLoraRegister(0x19);
@@ -340,15 +301,127 @@ int main(void)
 		}
 		else
 		{
+			if (UART_Received_Flag)
+			{
+				// send immidiately if received data from uart
+				UART_Received_Flag = 0;
+				if (!strncmp((char*)&requestedStateCommand, "ODCIN", 5))
+				{
+					requestedState = 2;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "POWON", 5))
+				{
+					requestedState = 3;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "POWOF", 5))
+				{
+					requestedState = 4;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "ODCOF", 5))
+				{
+					requestedState = 5;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "START", 5))
+				{
+					requestedState = 6;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "STOPP", 5))
+				{
+					requestedState = 7;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "STAT0", 5))
+				{
+					requestedState = 0x10;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "STAT1", 5))
+				{
+					requestedState = 0x11;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "STAT2", 5))
+				{
+					requestedState = 0x12;
+				}
+				else if ((char*)!strncmp(&requestedStateCommand, "STAT3", 5))
+				{
+					requestedState = 0x13;
+				}
+				else
+				{
+					requestedState = 0;
+				}
+				switch (requestedState)
+				{
+				case 0x13:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x13;
+					break;
+				case 0x12:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x12;
+					break;
+				case 0x11:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x11;
+					break;
+				case 0x10:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x10;
+					break;
+				case 7:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x07;
+					break;
+				case 6:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x06;
+					break;
+				case 5:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x05;
+					break;
+				case 4:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x04;
+					break;
+				case 3:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x03;
+					break;
+				case 2:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x02;
+					break;
+				default:
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x01;
+					break;
+				}
+				LoraWANTransmitByte(DNframe, 2);
+				tx_sec = sec;
+				UARTBufLen = sprintf(UARTBuf, "Sent %02x %02x \r\n", DNframe[0], DNframe[1]);
+				HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+			}
+			else 
+			{
+				if (sec-tx_sec > 150)
+				{
+					// if time passed from last TX
+					DNframe[0] = 0x00;
+					DNframe[1] = 0x01;
+					LoraWANTransmitByte(DNframe, 2);
+					tx_sec = sec;
+					UARTBufLen = sprintf(UARTBuf, "Sent %02x %02x \r\n", DNframe[0], DNframe[1]);
+					HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
+				}
+			}
+
 			memset(UARTBuf, 0, sizeof(UARTBuf));
-			UARTBufLen = sprintf(UARTBuf, "PACKET RECEPTION TIMEOUT\r\n");
+			UARTBufLen = sprintf(UARTBuf, ".");
 			HAL_UART_Transmit(&huart2, (uint8_t *) UARTBuf, UARTBufLen, 100);
 			HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
-			HAL_Delay(20);
+			HAL_Delay(5);
 			//HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
 		}
-
-		HAL_Delay(1);
 		/* USER CODE END WHILE */
 		/* USER CODE BEGIN 3 */
 
@@ -616,9 +689,9 @@ void Lora_Init()
 	writeLoraRegister(0x1D, 0x0B);
 
 	// Spreading Factor 12, LNA gain set by the internal AGC loop, RX timeout MSB = 0b11
-	writeLoraRegister(0x1E, 0xC7);   //bylo C5
+	writeLoraRegister(0x1E, 0xC4);   //bylo C5
 	// RX timeout LSB = 0xFF
-	writeLoraRegister(0x1F, 0xFF);   //bylo A0
+	writeLoraRegister(0x1F, 0x1E);   //bylo A0
 
 	// Sync Word = 0x34 (LoRaWAN sync word)
 	writeLoraRegister(0x39, 0x34);
